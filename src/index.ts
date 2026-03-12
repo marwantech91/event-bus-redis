@@ -165,6 +165,28 @@ export class EventBus {
   getStats() {
     return { ...this.stats };
   }
+
+  /**
+   * Replay dead letter events back to their original queue
+   */
+  async replayDeadLetters(type: string, limit?: number): Promise<number> {
+    const items = await this.getDeadLetters(type);
+    const toReplay = limit ? items.slice(0, limit) : items;
+
+    for (const event of toReplay) {
+      event.metadata.retryCount = 0;
+      await this.publisher.publish(type, JSON.stringify(event));
+    }
+
+    // Remove replayed items from DLQ
+    await this.publisher.del(`dlq:${type}`);
+    const remaining = limit ? items.slice(limit) : [];
+    for (const item of remaining) {
+      await this.publisher.rPush(`dlq:${type}`, JSON.stringify(item));
+    }
+
+    return toReplay.length;
+  }
 }
 
 export default EventBus;
